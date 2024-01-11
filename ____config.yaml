@@ -1,0 +1,19 @@
+#   absolute paths to objects 
+
+
+MLFocalLengths_pth: "/home/bl/Desktop/bde/MLFocalLengths/best_model.pth"
+MLFcalLenghths_target_dir: "/home/bl/Desktop/bde/nyu_depth_v2/images_rgb"
+
+
+SEEM_config_path: "/home/bl/Desktop/bde/Segment-Everything-Everywhere-All-At-Once/configs/seem/focall_unicl_lang_demo.yaml"
+SEEM_pth: "/home/bl/Desktop/.xdecoder_data/pths/seem_focall_v0.pt"
+
+
+VanishingPoint_Viz: "/home/bl/Desktop/bde/analyzeImg"
+
+# RAW : 640 480
+img_width: "576"
+img_height: "432"
+
+DataSetBasePath: "/home/bl/Desktop/bde/nyu_depth_v2"
+

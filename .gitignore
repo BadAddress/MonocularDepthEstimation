@@ -1,0 +1,6 @@
+/analyzeImg
+/NPY*
+/nyu_depth*
+/train_logs*
+/train_viz*
+best_model.pth

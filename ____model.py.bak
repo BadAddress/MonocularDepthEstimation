@@ -1,0 +1,234 @@
+from coco_categories import COCO_CATEGORIES
+import torch.nn as nn
+import torch
+import torch.nn.functional as F
+
+
+class binNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.embedding_dim = 7
+        self.embedding_layer = torch.nn.Embedding(202, self.embedding_dim)
+        
+        #ENCODE
+        self.vp_conv_1 = self.initial_block(2)
+        self.eb_conv_1 = self.initial_block(7)
+        self.rgb_conv_1 = self.initial_block(3)
+        self.merge_conv_1 = self.initial_block(12)
+
+        self.first_pooling = self.max_pooling(3,2)
+
+        self.vp_contract_1 = self.contracting_block(16)
+        self.eb_contract_1 = self.contracting_block(64)
+        self.rgb_contract_1 = self.contracting_block(64)
+        self.merge_contract_1 = self.contracting_block(128)
+
+        self.other_pooling = self.max_pooling(2,2)
+
+        self.vp_contract_2 = self.contracting_block(32)
+        self.eb_contract_2 = self.contracting_block(128)
+        self.rgb_contract_2 = self.contracting_block(128)
+        self.merge_contract_2 = self.contracting_block(256)
+
+        self.merge_contract_3 = self.contracting_block(512)        
+
+        self.merge_bottom_1 = self.bottom_layer(1024)
+
+        
+        #DECODER
+        self.expand_4 = self.expansive_block(1536)
+        self.expand_3 = self.expansive_block(1088)
+        self.expand_2 = self.expansive_block(800)
+        self.crop_conv = self.reAdjustSize()
+        self.final_conv = self.finalConv()
+
+
+    def initial_block(self,ic):
+        chanel_map = {2:8,7:32,3:32,12:64}
+        oc = chanel_map[ic]
+        res = nn.Sequential(
+            nn.Conv2d(in_channels=ic,out_channels=oc,kernel_size=3,stride=1,padding=2),
+            nn.BatchNorm2d(oc),
+            nn.ReLU(),    
+            nn.Conv2d(in_channels=oc,out_channels=2*oc,kernel_size=3,stride=1,padding=1),
+            nn.BatchNorm2d(2*oc),
+            nn.ReLU(),
+        )
+        return res    
+
+
+    def contracting_block(self,ic):
+        res = nn.Sequential(
+            nn.Conv2d(in_channels=ic,out_channels=2*ic,kernel_size=3,stride=1,padding=1),
+            nn.BatchNorm2d(2*ic),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=2*ic,out_channels=2*ic,kernel_size=3,stride=1,padding=1),
+            nn.BatchNorm2d(2*ic),
+            nn.ReLU(),
+        )
+        return res
+
+    def bottom_layer(self,ic):
+        res = nn.Sequential(
+            nn.Conv2d(in_channels=ic,out_channels=ic//2,kernel_size=1,stride=1),
+            nn.BatchNorm2d(ic//2),
+            nn.ReLU()
+        )
+        return res
+    
+
+    def max_pooling(self,kernel_size,stride):
+        res = nn.MaxPool2d(kernel_size=kernel_size,stride=stride)
+        return res
+
+
+
+    def bilinear_upsample(self,x):
+        return F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=True)
+
+
+
+    def expansive_block(self,ic):
+        
+        if ic==800:
+            res = nn.Sequential(
+            nn.Conv2d(in_channels=ic,out_channels=512,kernel_size=3,stride=1,padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=512,out_channels=256,kernel_size=3,stride=1,padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            )
+            return res
+
+
+        chanel_map = {1536:512,1088:512}
+        oc = chanel_map[ic]
+
+        res = nn.Sequential(
+            nn.Conv2d(in_channels=ic,out_channels=oc,kernel_size=3,stride=1,padding=1),
+            nn.BatchNorm2d(oc),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=oc,out_channels=oc,kernel_size=3,stride=1,padding=1),
+            nn.BatchNorm2d(oc),
+            nn.ReLU(),
+        )
+        return res
+        
+
+    def reAdjustSize(self):
+        res = nn.Sequential(
+            nn.Conv2d(in_channels=128,out_channels=128,kernel_size=3,stride=1,padding=0),
+            nn.BatchNorm2d(128),
+            nn.ReLU()
+        )
+        return res
+
+
+    def finalConv(self):
+        res = nn.Sequential(
+            nn.Conv2d(384,64,kernel_size=3,padding=1),
+            nn.Conv2d(64,1,kernel_size=1,padding=0)
+        )
+        return res
+
+
+
+    def forward(self,vp,seg,rgb):
+
+        eb = self.embedding_layer(seg)
+        eb = eb.squeeze(1)
+        eb = eb.permute(0,3,1,2)
+        merge = torch.cat((vp,eb,rgb),dim=1)
+        
+#############################################################################################
+        vp_1 = self.vp_conv_1(vp)
+        eb_1 = self.eb_conv_1(eb)
+        rgb_1 = self.rgb_conv_1(rgb)
+        merge_1 = self.merge_conv_1(merge)
+
+        vp_1_next = self.first_pooling(vp_1)
+        eb_1_next = self.first_pooling(eb_1)
+        rgb_1_next = self.first_pooling(rgb_1)
+        merge_1_next = self.first_pooling(merge_1)
+
+
+        vp_2 = self.vp_contract_1(vp_1_next)
+        eb_2 = self.eb_contract_1(eb_1_next)
+        rgb_2 = self.rgb_contract_1(rgb_1_next)
+        merge_2 = self.merge_contract_1(merge_1_next)
+
+        vp_2_next = self.other_pooling(vp_2)
+        eb_2_next = self.other_pooling(eb_2)
+        rgb_2_next = self.other_pooling(rgb_2)
+        merge_2_next = self.other_pooling(merge_2)
+
+        
+        vp_3 = self.vp_contract_2(vp_2_next)
+        eb_3 = self.eb_contract_2(eb_2_next)
+        rgb_3 = self.rgb_contract_2(rgb_2_next)
+        merge_3 = self.merge_contract_2(merge_2_next)
+
+        # vp_3_next = self.other_pooling(vp_3)
+        # eb_3_next = self.other_pooling(eb_3)
+        # rgb_3_next = self.other_pooling(rgb_3)
+        merge_3_next = self.other_pooling(merge_3)
+
+    #############################################################################################
+        
+        merge_4 = self.merge_contract_3(merge_3_next)
+        merge_4_next = self.other_pooling(merge_4)
+
+        merge_horizontal = self.merge_bottom_1(merge_4_next)
+        
+        merge_4_up = self.bilinear_upsample(merge_horizontal)
+
+    #############################################################################################
+
+        merge_4_up_concat = torch.cat((merge_4,merge_4_up),dim=1)
+        merge_4_up_next = self.expand_4(merge_4_up_concat)
+        merge_3_up = self.bilinear_upsample(merge_4_up_next)
+
+
+        merge_3_up_concat = torch.cat((vp_3,eb_3,rgb_3,merge_3_up),dim=1)
+        merge_3_up_next = self.expand_3(merge_3_up_concat)
+        # introduce supervison
+        merge_2_up = self.bilinear_upsample(merge_3_up_next)
+        
+
+        merge_2_up_concat = torch.cat((vp_2,eb_2,rgb_2,merge_2_up),dim=1)
+        merge_2_up_next = self.expand_2(merge_2_up_concat)
+        merge_1_up = self.bilinear_upsample(merge_2_up_next)
+        
+
+        merge_1_reAdjust = self.crop_conv(merge_1) 
+                
+        merge_final = torch.cat((merge_1_reAdjust,merge_1_up),dim=1)
+
+        res = self.final_conv(merge_final)
+        
+        return res
+
+
+
+
+
+if __name__ == "__main__":
+
+    state_of_art = binNet()
+
+    vp = torch.randn(1,2, 576, 432) 
+    eb = torch.randn(1,7, 576, 432) 
+    rgb = torch.randn(1,3, 576, 432) 
+    merge = torch.randn(1,12, 576, 432)     
+
+
+    print( state_of_art(vp,eb,rgb,merge).shape )
+    
+
+
+
